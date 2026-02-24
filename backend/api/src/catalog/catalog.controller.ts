@@ -34,4 +34,16 @@ export class CatalogController {
   getSellerInfo(@Param('id') id: string) {
     return this.catalogService.getSellerInfo(id);
   }
+
+  @Get('sellers/:id/products')
+  listSellerProducts(
+    @Param('id') id: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.catalogService.listProductsBySeller(id, {
+      page: page ? Number(page) : 1,
+      limit: limit ? Number(limit) : 20,
+    });
+  }
 }

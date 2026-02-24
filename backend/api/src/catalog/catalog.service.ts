@@ -188,6 +188,57 @@ export class CatalogService {
     };
   }
 
+  async listProductsBySeller(
+    sellerId: string,
+    pagination?: { page?: number; limit?: number },
+  ) {
+    const seller = await this.prisma.seller.findUnique({
+      where: { id: sellerId },
+      select: { id: true },
+    });
+    if (!seller) throw new NotFoundException('Seller not found');
+
+    const page = pagination?.page ?? 1;
+    const limit = pagination?.limit ?? 20;
+    const skip = (page - 1) * limit;
+
+    const where = { isActive: true, sellerId };
+
+    const [items, total] = await Promise.all([
+      this.prisma.product.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          categoryId: true,
+          sellerId: true,
+          name: true,
+          basePrice: true,
+          unit: true,
+          thumbnailUrl: true,
+        },
+      }),
+      this.prisma.product.count({ where }),
+    ]);
+
+    return {
+      page,
+      limit,
+      total,
+      items: items.map((p) => ({
+        id: p.id,
+        categoryId: p.categoryId,
+        sellerId: p.sellerId,
+        name: p.name,
+        basePrice: Number(p.basePrice),
+        unit: p.unit,
+        thumbnailUrl: p.thumbnailUrl,
+      })),
+    };
+  }
+
   private calculateFreshness(harvestedAt: Date | null, expiresAt: Date | null) {
     if (!expiresAt) return null;
 

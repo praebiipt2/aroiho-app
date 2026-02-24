@@ -9,8 +9,6 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe());
 
   const port = process.env.PORT || 3000;
-
-  // ⭐ สำคัญมากสำหรับ Docker
   await app.listen(port, '0.0.0.0');
 
   console.log(`🚀 Server running on port ${port}`);

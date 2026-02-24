@@ -73,7 +73,6 @@ export class CartService {
       },
       update: {
         quantity: { increment: dto.quantity },
-        // unitPrice ปกติไม่ควรเปลี่ยนใน cart เดิม (snapshot)
       },
     });
 

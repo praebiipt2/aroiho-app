@@ -57,6 +57,11 @@ class ProfileStore {
     return sp.getBool(_kOnboardingDone) ?? false;
   }
 
+  static Future<List<String>> loadOnboardingFoods() async {
+    final sp = await SharedPreferences.getInstance();
+    return sp.getStringList(_kOnboardingFoods) ?? <String>[];
+  }
+
   static Future<void> clear() async {
     final sp = await SharedPreferences.getInstance();
     await sp.remove(_kName);

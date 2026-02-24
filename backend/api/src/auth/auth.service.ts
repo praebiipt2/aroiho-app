@@ -4,6 +4,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 
+type AccessPayload = {
+  sub: string;
+  phone?: string;
+  role: string;
+};
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -13,6 +19,7 @@ export class AuthService {
   ) {}
 
   async requestOtp(phone: string) {
+    // DEV mock
     return { success: true, phone, requestId: randomUUID(), otp: '123456' };
   }
 
@@ -26,20 +33,36 @@ export class AuthService {
       create: { phone, role: 'CUSTOMER', status: 'ACTIVE' },
     });
 
-    // ✅ ใช้ ConfigService + มี fallback กันพัง
     const accessSecret =
       this.config.get<string>('JWT_ACCESS_SECRET') ?? 'dev-access-secret';
     const refreshSecret =
       this.config.get<string>('JWT_REFRESH_SECRET') ?? 'dev-refresh-secret';
 
-    const accessToken = this.jwt.sign(
-      { sub: user.id, phone: user.phone ?? undefined, role: user.role },
-      { secret: accessSecret, expiresIn: 900 },
-    );
+    const raw = this.config.get<string>('JWT_EXPIRES_IN') ?? '2592000';
+    const accessExpiresInSec: number = Number(raw);
 
-    const refreshToken = this.jwt.sign(
+    const expires =
+      Number.isFinite(accessExpiresInSec) && accessExpiresInSec > 0
+        ? accessExpiresInSec
+        : 2592000;
+
+    const payload: AccessPayload = {
+      sub: user.id,
+      phone: user.phone ?? undefined,
+      role: user.role,
+    };
+
+    const accessToken = this.jwt.sign<AccessPayload>(payload, {
+      secret: accessSecret,
+      expiresIn: expires,
+    });
+
+    const refreshToken = this.jwt.sign<{ sub: string }>(
       { sub: user.id },
-      { secret: refreshSecret, expiresIn: 604800 },
+      {
+        secret: refreshSecret,
+        expiresIn: 604800, // 7 days
+      },
     );
 
     return {

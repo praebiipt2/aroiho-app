@@ -127,11 +127,29 @@ async function main() {
       },
     }));
 
+  const organicProduct =
+    (await prisma.product.findUnique({ where: { slug: 'organic-salad-set' } })) ??
+    (await prisma.product.create({
+      data: {
+        slug: 'organic-salad-set',
+        name: 'ชุดผักสลัดออร์แกนิก',
+        description: 'ผักสดปลอดสาร คัดจากฟาร์มทุกเช้า',
+        isActive: true,
+        unit: 'ชุด',
+        basePrice: 165,
+        thumbnailUrl: 'https://example.com/thumbs/organic-salad.png',
+        sellerId: seller.id,
+        categoryId: organic.id,
+      },
+    }));
+
   // 6) ProductImage (ถ้ามี unique กันซ้ำ ให้ใช้ createMany + skipDuplicates)
   await prisma.productImage.createMany({
     data: [
       { productId: product.id, imageUrl: 'https://example.com/1.png', sortOrder: 0 },
       { productId: product.id, imageUrl: 'https://example.com/2.png', sortOrder: 1 },
+      { productId: organicProduct.id, imageUrl: 'https://example.com/organic-1.png', sortOrder: 0 },
+      { productId: organicProduct.id, imageUrl: 'https://example.com/organic-2.png', sortOrder: 1 },
     ],
     skipDuplicates: true,
   });
@@ -163,6 +181,26 @@ async function main() {
         quantityAvailable: 10,
         status: 'ACTIVE',
       },
+      {
+        productId: organicProduct.id,
+        sellerId: seller.id,
+        lotCode: 'LOT-ORG-001',
+        harvestedAt: now,
+        packedAt: now,
+        expiresAt: expires1,
+        quantityAvailable: 40,
+        status: 'ACTIVE',
+      },
+      {
+        productId: organicProduct.id,
+        sellerId: seller.id,
+        lotCode: 'LOT-ORG-002',
+        harvestedAt: now,
+        packedAt: now,
+        expiresAt: expires2,
+        quantityAvailable: 25,
+        status: 'ACTIVE',
+      },
     ],
     skipDuplicates: true,
   });
@@ -170,7 +208,7 @@ async function main() {
   console.log('✅ Seed completed:', {
     category: [seafood.slug, organic.slug],
     seller: seller.name,
-    product: product.slug,
+    product: [product.slug, organicProduct.slug],
   });
 }
 

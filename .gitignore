@@ -1,0 +1,21 @@
+cat > .gitignore << 'EOF'
+# macOS
+.DS_Store
+
+# archives
+*.zip
+
+# Node
+node_modules/
+dist/
+.env
+.env.*
+
+# Flutter
+.dart_tool/
+build/
+
+# IDE
+.vscode/
+.idea/
+EOF

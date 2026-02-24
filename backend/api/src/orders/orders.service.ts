@@ -1,10 +1,14 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+  Prisma,
+  TrackingEventType,
+  ShippingMethod,
+  ShipmentStatus,
+  TransportMode,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { ALLOWED_TRANSITIONS } from './order-transition.rules';
+import { TransitionOrderDto } from './dto/transition-order.dto';
 
 @Injectable()
 export class OrdersService {
@@ -19,7 +23,13 @@ export class OrdersService {
     return `OR${y}${m}${d}-${rand}`;
   }
 
-  async checkout(userId: string, addressId: string) {
+  // เพิ่ม shippingMethod (default = AUTO)
+  async checkout(
+    userId: string,
+    addressId: string,
+    shippingMethod: ShippingMethod = ShippingMethod.AUTO,
+    shippingSurcharge = 0,
+  ) {
     return this.prisma.$transaction(async (tx) => {
       const address = await tx.address.findFirst({
         where: { id: addressId, userId },
@@ -29,19 +39,13 @@ export class OrdersService {
 
       const cart = await tx.cart.findFirst({
         where: { userId, status: 'ACTIVE' },
-        include: {
-          items: {
-            include: { inventoryLot: true },
-          },
-        },
+        include: { items: { include: { inventoryLot: true } } },
       });
 
       if (!cart) throw new NotFoundException('Cart not found');
-      if (!cart.items || cart.items.length === 0) {
-        throw new BadRequestException('Cart is empty');
-      }
+      if (!cart.items?.length) throw new BadRequestException('Cart is empty');
 
-      // ตัดสต็อกกัน oversell
+      // กัน qty และตัดสต็อก
       for (const item of cart.items) {
         const qty = new Prisma.Decimal(item.quantity);
         if (qty.lte(0)) throw new BadRequestException('Invalid quantity');
@@ -52,9 +56,7 @@ export class OrdersService {
             status: 'ACTIVE',
             quantityAvailable: { gte: qty },
           },
-          data: {
-            quantityAvailable: { decrement: qty },
-          },
+          data: { quantityAvailable: { decrement: qty } },
         });
 
         if (updated.count === 0) {
@@ -63,22 +65,27 @@ export class OrdersService {
         }
       }
 
-      // คำนวณยอด
       const subtotal = cart.items.reduce((acc, item) => {
         const qty = new Prisma.Decimal(item.quantity);
         const price = new Prisma.Decimal(item.unitPrice);
         return acc.add(price.mul(qty));
       }, new Prisma.Decimal(0));
 
-      const deliveryFee = new Prisma.Decimal(0);
+      const method = shippingMethod ?? ShippingMethod.AUTO;
+      const effectiveMethod = method === ShippingMethod.AUTO ? ShippingMethod.GROUND : method;
+      const baseDeliveryFee = effectiveMethod === ShippingMethod.AIR ? 240 : 40;
+      const surcharge = Math.max(0, shippingSurcharge || 0);
+      const deliveryFee = new Prisma.Decimal(baseDeliveryFee + surcharge);
       const discount = new Prisma.Decimal(0);
       const total = subtotal.add(deliveryFee).sub(discount);
 
+      //  สร้าง order + ใส่ shippingMethod
       const order = await tx.order.create({
         data: {
           orderNo: this.genOrderNo(),
           userId,
           addressId,
+          shippingMethod, // ✅ NEW
           paymentStatus: 'PENDING',
           orderStatus: 'CONFIRMED',
           subtotal,
@@ -103,6 +110,85 @@ export class OrdersService {
         include: { items: true },
       });
 
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId: order.id,
+          fromStatus: 'CONFIRMED',
+          toStatus: 'CONFIRMED',
+          changedByUserId: userId,
+          note: 'Order created',
+        },
+      });
+
+      // สร้าง shipment + legs ตามวิธีจัดส่ง
+      // AUTO ให้ทำเหมือน GROUND ไปก่อน (ภายหลังค่อยใส่ rule เลือก AIR)
+      await tx.shipment.create({
+        data: {
+          orderId: order.id,
+          status: ShipmentStatus.PLANNED,
+          legs: {
+            create:
+              effectiveMethod === ShippingMethod.AIR
+                ? [
+                    {
+                      seq: 1,
+                      mode: TransportMode.TRUCK,
+                      status: ShipmentStatus.PLANNED,
+                      fromName: 'Seller',
+                      toName: 'Origin Hub',
+                    },
+                    {
+                      seq: 2,
+                      mode: TransportMode.FLIGHT,
+                      status: ShipmentStatus.PLANNED,
+                      fromName: 'Origin Airport',
+                      toName: 'Destination Airport',
+                      flightNo: 'TBD',
+                      meta: { note: 'flight info will be assigned later' },
+                    },
+                    {
+                      seq: 3,
+                      mode: TransportMode.TRUCK,
+                      status: ShipmentStatus.PLANNED,
+                      fromName: 'Destination Hub',
+                      toName: 'Customer',
+                    },
+                  ]
+                : [
+                    {
+                      seq: 1,
+                      mode: TransportMode.TRUCK,
+                      status: ShipmentStatus.PLANNED,
+                      fromName: 'Seller',
+                      toName: 'Customer',
+                    },
+                  ],
+          },
+        },
+      });
+
+      //  tracking auto
+      await tx.trackingEvent.create({
+        data: { orderId: order.id, type: TrackingEventType.ORDER_CREATED, message: 'สร้างคำสั่งซื้อแล้ว' },
+      });
+      await tx.trackingEvent.create({
+        data: { orderId: order.id, type: TrackingEventType.PAYMENT_PENDING, message: 'รอการชำระเงิน' },
+      });
+
+      // tracking note: ลูกค้าเลือกวิธีจัดส่ง
+      await tx.trackingEvent.create({
+        data: {
+          orderId: order.id,
+          type: TrackingEventType.NOTE,
+          message: `เลือกวิธีจัดส่ง: ${effectiveMethod} (ค่าจัดส่ง ${baseDeliveryFee + surcharge} บาท)`,
+          meta: {
+            shippingMethod: effectiveMethod,
+            shippingBaseFee: baseDeliveryFee,
+            shippingSurcharge: surcharge,
+          },
+        },
+      });
+
       await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
       return order;
     });
@@ -123,7 +209,6 @@ export class OrdersService {
         throw new BadRequestException('Order cannot be cancelled after shipping');
       }
 
-      // idempotent
       if (order.orderStatus === 'CANCELLED') {
         return tx.order.findUnique({
           where: { id: order.id },
@@ -131,7 +216,6 @@ export class OrdersService {
         });
       }
 
-      // คืน stock
       for (const item of order.items) {
         const qty = new Prisma.Decimal(item.quantity);
         await tx.inventoryLot.update({
@@ -140,11 +224,28 @@ export class OrdersService {
         });
       }
 
-      return tx.order.update({
+      const updated = await tx.order.update({
         where: { id: order.id },
         data: { orderStatus: 'CANCELLED' },
         include: { items: true, payments: true, address: true },
       });
+
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId: order.id,
+          fromStatus: order.orderStatus,
+          toStatus: 'CANCELLED',
+          changedByUserId: userId,
+          note: 'Cancelled by customer',
+        },
+      });
+
+      // tracking auto
+      await tx.trackingEvent.create({
+        data: { orderId: order.id, type: TrackingEventType.CANCELLED, message: 'ยกเลิกคำสั่งซื้อ', meta: { by: 'customer' } },
+      });
+
+      return updated;
     });
   }
 
@@ -156,7 +257,6 @@ export class OrdersService {
       });
       if (!order) throw new NotFoundException('Order not found');
 
-      // ✅ idempotent ต้องเช็คก่อน: ยิงซ้ำแล้วคืน order เดิม ไม่ error ไม่คืน stock ซ้ำ
       const alreadyRefunded =
         order.paymentStatus === 'REFUNDED' ||
         order.orderStatus === 'CANCELLED' ||
@@ -169,7 +269,6 @@ export class OrdersService {
         });
       }
 
-      // ✅ เงื่อนไข refund
       if (order.paymentStatus !== 'PAID') {
         throw new BadRequestException('Only PAID orders can be refunded');
       }
@@ -177,7 +276,6 @@ export class OrdersService {
         throw new BadRequestException('Refund not allowed after delivery');
       }
 
-      // ✅ คืน stock
       for (const item of order.items) {
         const qty = new Prisma.Decimal(item.quantity);
         await tx.inventoryLot.update({
@@ -186,9 +284,7 @@ export class OrdersService {
         });
       }
 
-      // ✅ audit trail: เพิ่ม payment record REFUNDED
-      const lastPaid =
-        [...order.payments].reverse().find((p) => p.status === 'PAID') ?? null;
+      const lastPaid = [...order.payments].reverse().find((p) => p.status === 'PAID') ?? null;
 
       await tx.payment.create({
         data: {
@@ -201,12 +297,99 @@ export class OrdersService {
         },
       });
 
-      // ✅ อัปเดต order
-      return tx.order.update({
+      const updated = await tx.order.update({
         where: { id: order.id },
         data: { paymentStatus: 'REFUNDED', orderStatus: 'CANCELLED' },
         include: { items: true, payments: true, address: true },
       });
+
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId: order.id,
+          fromStatus: order.orderStatus,
+          toStatus: 'CANCELLED',
+          changedByUserId: userId,
+          note: 'Refunded and cancelled',
+        },
+      });
+
+      //tracking auto
+      await tx.trackingEvent.create({
+        data: { orderId: order.id, type: TrackingEventType.REFUND_REQUESTED, message: 'เริ่มดำเนินการคืนเงิน', meta: { by: 'customer' } },
+      });
+      await tx.trackingEvent.create({
+        data: { orderId: order.id, type: TrackingEventType.REFUNDED, message: 'คืนเงินสำเร็จ', meta: { by: 'system' } },
+      });
+      await tx.trackingEvent.create({
+        data: { orderId: order.id, type: TrackingEventType.CANCELLED, message: 'ปิดคำสั่งซื้อ (ยกเลิก)' },
+      });
+
+      return updated;
+    });
+  }
+
+  async transition(orderId: string, actorUserId: string, dto: TransitionOrderDto) {
+    return this.prisma.$transaction(async (tx) => {
+      const order = await tx.order.findUnique({ where: { id: orderId } });
+      if (!order) throw new NotFoundException('Order not found');
+
+      const from = order.orderStatus;
+      const to = dto.to;
+
+      const allowed = ALLOWED_TRANSITIONS[from as keyof typeof ALLOWED_TRANSITIONS] ?? [];
+      if (!allowed.includes(to)) {
+        throw new BadRequestException(`Invalid transition: ${from} -> ${to}`);
+      }
+
+      const updated = await tx.order.update({
+        where: { id: orderId },
+        data: { orderStatus: to },
+      });
+
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId,
+          fromStatus: from,
+          toStatus: to,
+          changedByUserId: actorUserId,
+          note: dto.note ?? null,
+        },
+      });
+
+      // tracking auto: map สถานะเป็น event
+      const map: Record<string, TrackingEventType | undefined> = {
+        PREPARING: TrackingEventType.PREPARING,
+        SHIPPED: TrackingEventType.IN_TRANSIT,
+        DELIVERED: TrackingEventType.DELIVERED,
+        CANCELLED: TrackingEventType.CANCELLED,
+      };
+
+      const ev = map[to];
+      if (ev) {
+        await tx.trackingEvent.create({
+          data: {
+            orderId,
+            type: ev,
+            message: dto.note ?? undefined,
+            meta: { from, to },
+          },
+        });
+      }
+
+      return updated;
+    });
+  }
+
+  async getHistory(userId: string, orderId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, userId },
+      select: { id: true },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    return this.prisma.orderStatusHistory.findMany({
+      where: { orderId },
+      orderBy: { createdAt: 'asc' },
     });
   }
 
@@ -226,4 +409,16 @@ export class OrdersService {
       include: { items: true },
     });
   }
+  async getMyShipment(userId: string, orderId: string) {
+  const order = await this.prisma.order.findFirst({
+    where: { id: orderId, userId },
+    select: { id: true },
+  });
+  if (!order) throw new NotFoundException('Order not found');
+
+  return this.prisma.shipment.findUnique({
+    where: { orderId },
+    include: { legs: { orderBy: { seq: 'asc' } } },
+  });
+}
 }

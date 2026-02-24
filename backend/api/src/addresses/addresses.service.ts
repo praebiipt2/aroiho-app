@@ -17,7 +17,6 @@ export class AddressesService {
   async createMine(userId: string, dto: CreateAddressDto) {
     const wantDefault = dto.isDefault === true;
 
-    // ถ้าตั้ง default -> เคลียร์ของเดิมก่อน
     return this.prisma.$transaction(async (tx) => {
       if (wantDefault) {
         await tx.address.updateMany({

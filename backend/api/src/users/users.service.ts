@@ -26,7 +26,7 @@ export class UsersService {
         },
       });
     } catch (e: any) {
-      // ✅ Prisma unique constraint
+      // Prisma unique constraint
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         // target จะบอก field ที่ชน เช่น ['email']
         throw new ConflictException('Email นี้ถูกใช้งานแล้ว');
