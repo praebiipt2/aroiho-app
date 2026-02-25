@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { OrdersService } from './orders.service';
 import { TransitionOrderDto } from './dto/transition-order.dto';
@@ -54,10 +54,46 @@ export class OrdersController {
   }
 
   @Get()
-  listMyOrders(@Req() req: any) {
+  listMyOrders(
+    @Req() req: any,
+    @Query('includeHidden') includeHidden?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
     const userId = req.user.id ?? req.user.sub;
-    return this.ordersService.listMyOrders(userId);
+    const pageNum = Number.parseInt(page ?? '1', 10);
+    const limitNum = Number.parseInt(limit ?? '10', 10);
+    return this.ordersService.listMyOrders(userId, {
+      includeHidden: includeHidden === 'true',
+      page: Number.isFinite(pageNum) ? pageNum : 1,
+      limit: Number.isFinite(limitNum) ? limitNum : 10,
+    });
   }
+
+  @Post(':orderId/hide')
+  hide(@Req() req: any, @Param('orderId') orderId: string) {
+    const userId = req.user.id ?? req.user.sub;
+    return this.ordersService.hideOrder(userId, orderId);
+  }
+
+  @Post(':orderId/unhide')
+  unhide(@Req() req: any, @Param('orderId') orderId: string) {
+    const userId = req.user.id ?? req.user.sub;
+    return this.ordersService.unhideOrder(userId, orderId);
+  }
+
+  @Post(':orderId/delete')
+  softDelete(@Req() req: any, @Param('orderId') orderId: string) {
+    const userId = req.user.id ?? req.user.sub;
+    return this.ordersService.softDeleteOrder(userId, orderId);
+  }
+
+  @Post(':orderId/restore')
+  restoreDeleted(@Req() req: any, @Param('orderId') orderId: string) {
+    const userId = req.user.id ?? req.user.sub;
+    return this.ordersService.restoreDeletedOrder(userId, orderId);
+  }
+
   @Get(':orderId/shipment')
   getShipment(@Req() req: any, @Param('orderId') orderId: string) {
     const userId = req.user.id ?? req.user.sub;

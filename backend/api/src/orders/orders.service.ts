@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import {
   Prisma,
   TrackingEventType,
@@ -13,6 +13,8 @@ import { TransitionOrderDto } from './dto/transition-order.dto';
 @Injectable()
 export class OrdersService {
   constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(OrdersService.name);
+  private static readonly SOFT_DELETE_DAYS = 60;
 
   private genOrderNo() {
     const now = new Date();
@@ -21,6 +23,29 @@ export class OrdersService {
     const d = String(now.getDate()).padStart(2, '0');
     const rand = Math.random().toString(16).slice(2, 8).toUpperCase();
     return `OR${y}${m}${d}-${rand}`;
+  }
+
+  async purgeExpiredDeletedOrders() {
+    const now = new Date();
+    const expired = await this.prisma.order.findMany({
+      where: {
+        deletedAt: { not: null },
+        purgeAfter: { lte: now },
+      },
+      select: { id: true },
+    });
+
+    if (!expired.length) return 0;
+
+    const ids = expired.map((o) => o.id);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.payment.deleteMany({ where: { orderId: { in: ids } } });
+      await tx.order.deleteMany({ where: { id: { in: ids } } });
+    });
+
+    const purged = ids.length;
+    if (purged > 0) this.logger.log(`Purged ${purged} expired soft-deleted orders`);
+    return purged;
   }
 
   // เพิ่ม shippingMethod (default = AUTO)
@@ -382,7 +407,7 @@ export class OrdersService {
 
   async getHistory(userId: string, orderId: string) {
     const order = await this.prisma.order.findFirst({
-      where: { id: orderId, userId },
+      where: { id: orderId, userId, deletedAt: null },
       select: { id: true },
     });
     if (!order) throw new NotFoundException('Order not found');
@@ -395,30 +420,145 @@ export class OrdersService {
 
   async getOrder(userId: string, orderId: string) {
     const order = await this.prisma.order.findFirst({
-      where: { id: orderId, userId },
+      where: { id: orderId, userId, deletedAt: null },
       include: { items: true, address: true, payments: true },
     });
     if (!order) throw new NotFoundException('Order not found');
     return order;
   }
 
-  async listMyOrders(userId: string) {
-    return this.prisma.order.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      include: { items: true },
+  async listMyOrders(
+    userId: string,
+    options?: { includeHidden?: boolean; page?: number; limit?: number },
+  ) {
+    await this.purgeExpiredDeletedOrders();
+    const includeHidden = options?.includeHidden === true;
+    const page = Math.max(1, options?.page ?? 1);
+    const limit = Math.min(50, Math.max(1, options?.limit ?? 10));
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.OrderWhereInput = includeHidden
+      ? {
+          userId,
+          deletedAt: null,
+          hiddenAt: { not: null },
+        }
+      : {
+          userId,
+          deletedAt: null,
+          hiddenAt: null,
+        };
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.order.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        include: { items: true },
+        skip,
+        take: limit,
+      }),
+      this.prisma.order.count({ where }),
+    ]);
+
+    return {
+      items,
+      page,
+      limit,
+      total,
+      hasMore: skip + items.length < total,
+    };
+  }
+
+  async restoreDeletedOrder(userId: string, orderId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, userId, deletedAt: { not: null } },
+      select: { id: true, purgeAfter: true },
+    });
+    if (!order) throw new NotFoundException('Deleted order not found');
+
+    const now = new Date();
+    if (order.purgeAfter && order.purgeAfter <= now) {
+      throw new BadRequestException('Order cannot be restored (purge window expired)');
+    }
+
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: {
+        deletedAt: null,
+        purgeAfter: null,
+        hiddenAt: null,
+      },
+    });
+    return { ok: true, restored: true };
+  }
+
+  async hideOrder(userId: string, orderId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, userId, deletedAt: null },
+      select: { id: true, hiddenAt: true },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.hiddenAt) return { ok: true, hidden: true };
+
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: { hiddenAt: new Date() },
+    });
+    return { ok: true, hidden: true };
+  }
+
+  async unhideOrder(userId: string, orderId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, userId, deletedAt: null },
+      select: { id: true, hiddenAt: true },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (!order.hiddenAt) return { ok: true, hidden: false };
+
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: { hiddenAt: null },
+    });
+    return { ok: true, hidden: false };
+  }
+
+  async softDeleteOrder(userId: string, orderId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, userId, deletedAt: null },
+      select: { id: true, orderStatus: true },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    if (!['DELIVERED', 'CANCELLED'].includes(order.orderStatus)) {
+      throw new BadRequestException('Delete allowed only for DELIVERED/CANCELLED orders');
+    }
+
+    const now = new Date();
+    const purgeAfter = new Date(now);
+    purgeAfter.setDate(now.getDate() + OrdersService.SOFT_DELETE_DAYS);
+
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: {
+        deletedAt: now,
+        purgeAfter,
+        hiddenAt: now,
+      },
+    });
+
+    return { ok: true, deleted: true, purgeAfter };
+  }
+
+  async getMyShipment(userId: string, orderId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, userId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    return this.prisma.shipment.findUnique({
+      where: { orderId },
+      include: { legs: { orderBy: { seq: 'asc' } } },
     });
   }
-  async getMyShipment(userId: string, orderId: string) {
-  const order = await this.prisma.order.findFirst({
-    where: { id: orderId, userId },
-    select: { id: true },
-  });
-  if (!order) throw new NotFoundException('Order not found');
-
-  return this.prisma.shipment.findUnique({
-    where: { orderId },
-    include: { legs: { orderBy: { seq: 'asc' } } },
-  });
-}
 }
