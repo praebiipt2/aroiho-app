@@ -22,10 +22,12 @@ class _SignupScreenState extends State<SignupScreen> {
   // controllers
   final nameCtl = TextEditingController();
   final emailCtl = TextEditingController();
-  final phoneCtl = TextEditingController(text: '0800000001');
+  final phoneCtl = TextEditingController();
   final addressCtl = TextEditingController();
   final passCtl = TextEditingController();
   final pass2Ctl = TextEditingController();
+  bool showPassword = false;
+  bool showConfirmPassword = false;
 
   // otp
   final otpCtl = TextEditingController();
@@ -249,14 +251,24 @@ class _SignupScreenState extends State<SignupScreen> {
         const SizedBox(height: 10),
         TextField(
           controller: passCtl,
-          obscureText: true,
-          decoration: _deco('รหัสผ่านใหม่', icon: Icons.lock_outline),
+          obscureText: !showPassword,
+          decoration: _deco('รหัสผ่านใหม่', icon: Icons.lock_outline).copyWith(
+            suffixIcon: IconButton(
+              onPressed: () => setState(() => showPassword = !showPassword),
+              icon: Icon(showPassword ? Icons.visibility_off : Icons.visibility),
+            ),
+          ),
         ),
         const SizedBox(height: 10),
         TextField(
           controller: pass2Ctl,
-          obscureText: true,
-          decoration: _deco('ยืนยันรหัสผ่าน', icon: Icons.lock_outline),
+          obscureText: !showConfirmPassword,
+          decoration: _deco('ยืนยันรหัสผ่าน', icon: Icons.lock_outline).copyWith(
+            suffixIcon: IconButton(
+              onPressed: () => setState(() => showConfirmPassword = !showConfirmPassword),
+              icon: Icon(showConfirmPassword ? Icons.visibility_off : Icons.visibility),
+            ),
+          ),
         ),
         const SizedBox(height: 10),
         Row(

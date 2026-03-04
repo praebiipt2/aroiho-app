@@ -1,7 +1,12 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../api/catalog_api.dart';
 import '../api/cart_api.dart';
 import '../api/auth_api.dart';
+import '../config/app_config.dart';
 import 'cart_screen.dart';
 import 'seller_detail_screen.dart';
 
@@ -32,7 +37,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   @override
   void initState() {
     super.initState();
-    catalogApi = CatalogApi(baseUrl: 'http://localhost:3000');
+    catalogApi = CatalogApi(baseUrl: AppConfig.baseUrl);
     cartApi = CartApi();
     _loadDetail();
   }
@@ -52,15 +57,16 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       return;
     }
 
-    final lots = detail?['lots'];
-    if (lots is! List || lots.isEmpty) {
+    final lots = _extractLots(detail?['lots']);
+    if (lots.isEmpty) {
       _showMessage('สินค้านี้ยังไม่มีล็อตพร้อมขาย');
       return;
     }
 
-    final firstLot = lots.first;
-    final inventoryLotId =
-        firstLot is Map ? firstLot['id']?.toString() : null;
+    final selectedLot = await _showLotPickerDialog(lots);
+    if (selectedLot == null) return;
+
+    final inventoryLotId = selectedLot['id']?.toString();
     if (inventoryLotId == null || inventoryLotId.isEmpty) {
       _showMessage('ไม่พบ inventory lot');
       return;
@@ -75,7 +81,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         quantity: 1,
       );
       if (!mounted) return;
-      _showMessage('เพิ่มลงตะกร้าแล้ว');
+      final lotCode = (selectedLot['lotCode'] ?? '').toString();
+      _showMessage(
+        lotCode.isEmpty ? 'เพิ่มลงตะกร้าแล้ว' : 'เพิ่มลงตะกร้าแล้ว (ล็อต $lotCode)',
+      );
       if (buyNow) {
         Navigator.push(
           context,
@@ -90,6 +99,71 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     } finally {
       if (mounted) setState(() => addingToCart = false);
     }
+  }
+
+  List<Map<String, dynamic>> _extractLots(dynamic rawLots) {
+    if (rawLots is! List) return <Map<String, dynamic>>[];
+    return rawLots
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .where((e) => (e['id'] ?? '').toString().isNotEmpty)
+        .toList();
+  }
+
+  Future<Map<String, dynamic>?> _showLotPickerDialog(
+    List<Map<String, dynamic>> lots,
+  ) async {
+    var selectedIndex = 0;
+    return showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('เลือกลอตที่จะสั่งซื้อ'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: List.generate(lots.length, (i) {
+                  final lot = lots[i];
+                  final lotCode = (lot['lotCode'] ?? '-').toString();
+                  final qty = _formatQuantity(lot['quantityAvailable']) ?? '-';
+                  final expiresAt = _formatDateThaiShort(
+                    lot['expiresAt']?.toString(),
+                  );
+                  final subtitle = expiresAt == null
+                      ? 'คงเหลือ $qty หน่วย'
+                      : 'คงเหลือ $qty หน่วย • หมดอายุ $expiresAt';
+                  final selected = selectedIndex == i;
+                  return ListTile(
+                    onTap: () => setLocal(() => selectedIndex = i),
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      selected
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_off,
+                      color: selected ? Theme.of(context).primaryColor : Colors.grey,
+                    ),
+                    title: Text(lotCode, style: const TextStyle(fontWeight: FontWeight.w700)),
+                    subtitle: Text(subtitle),
+                  );
+                }),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('ยกเลิก'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, lots[selectedIndex]),
+              child: const Text('ยืนยัน'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _showMessage(String message) {
@@ -126,6 +200,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   Widget build(BuildContext context) {
     final name = (detail?['name'] ?? widget.item['name'] ?? '-') as String;
     final price = _toPrice(detail?['basePrice'] ?? widget.item['basePrice']);
+    final productId = (detail?['id'] ?? widget.item['id'] ?? '').toString();
     final thumb = _mainImageUrl();
     final seller = detail?['seller'] as Map<String, dynamic>?;
     final sellerId = (seller?['id'] ?? widget.item['sellerId'])?.toString();
@@ -147,9 +222,20 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                     onPressed: () => Navigator.pop(context),
                     icon: const Icon(Icons.arrow_back_ios_new_rounded),
                   ),
-                  const Text(
-                    'aroiho',
-                    style: TextStyle(fontSize: 34, fontWeight: FontWeight.w900, letterSpacing: -1.3),
+                  SizedBox(
+                    height: 40,
+                    width: 130,
+                    child: ClipRect(
+                                child: Transform.scale(
+                        scale: 3.5,
+                        alignment: Alignment.centerLeft,
+                        child: Image.asset(
+                          'assets/logo/aroiho_logo.png',
+                          fit: BoxFit.contain,
+                          alignment: Alignment.centerLeft,
+                        ),
+                      ),
+                    ),
                   ),
                   const Spacer(),
                   IconButton(
@@ -207,6 +293,33 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                     Text(sellerName, style: TextStyle(color: Colors.grey.shade800, fontSize: 12)),
                                   ],
                                 ),
+                                if (productId.isNotEmpty) ...[
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          'รหัสสินค้า: $productId',
+                                          style: TextStyle(
+                                            color: Colors.grey.shade700,
+                                            fontSize: 12,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      TextButton(
+                                        onPressed: () async {
+                                          await Clipboard.setData(
+                                            ClipboardData(text: productId),
+                                          );
+                                          if (!mounted) return;
+                                          _showMessage('คัดลอกรหัสสินค้าแล้ว');
+                                        },
+                                        child: const Text('คัดลอก'),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                                 const SizedBox(height: 10),
                                 Wrap(
                                   spacing: 6,
@@ -262,7 +375,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (_) => SellerDetailScreen(sellerId: sellerId),
+                                  builder: (_) => SellerDetailScreen(
+                                    sellerId: sellerId,
+                                    authApi: widget.authApi,
+                                  ),
                                 ),
                               );
                             },
@@ -322,48 +438,137 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
   String _lotSummary() {
     final lots = detail?['lots'];
-    if (lots is! List || lots.isEmpty) return 'ไม่มีล็อตสินค้าที่เปิดขาย';
+    if (lots is! List || lots.isEmpty) {
+      return 'ยังไม่มีสต็อกล็อตที่เปิดขายในตอนนี้\n(เพิ่มสินค้าแล้ว ต้องตั้งล็อตสต็อกก่อนจึงจะซื้อได้)';
+    }
     final activeLots = lots.length;
-    final firstQty = (lots.first as Map?)?['quantityAvailable'];
-    return '✓ มีล็อตพร้อมขาย $activeLots ล็อต\n✓ คงเหลือประมาณ ${firstQty ?? '-'} หน่วย';
+    final firstLot = lots.first as Map?;
+    final firstQty = _formatQuantity(firstLot?['quantityAvailable']);
+    final expiresAt = firstLot?['expiresAt']?.toString();
+    final formattedExpire = _formatDateThaiShort(expiresAt);
+    final expireText = formattedExpire != null
+        ? '\n✓ ล็อตล่าสุดหมดอายุ: $formattedExpire'
+        : '';
+    return '✓ มีล็อตพร้อมขาย $activeLots ล็อต\n✓ คงเหลือประมาณ ${firstQty ?? '-'} หน่วย$expireText';
+  }
+
+  String? _formatDateThaiShort(String? value) {
+    if (value == null || value.trim().isEmpty) return null;
+    final parsed = DateTime.tryParse(value.trim());
+    if (parsed == null) return null;
+    final local = parsed.toLocal();
+    const months = [
+      'ม.ค.',
+      'ก.พ.',
+      'มี.ค.',
+      'เม.ย.',
+      'พ.ค.',
+      'มิ.ย.',
+      'ก.ค.',
+      'ส.ค.',
+      'ก.ย.',
+      'ต.ค.',
+      'พ.ย.',
+      'ธ.ค.'
+    ];
+    return '${local.day} ${months[local.month - 1]} ${local.year}';
+  }
+
+  String? _formatQuantity(dynamic value) {
+    if (value == null) return null;
+    final numValue = value is num ? value : num.tryParse(value.toString());
+    if (numValue == null) return null;
+    if (numValue == numValue.roundToDouble()) {
+      return numValue.toInt().toString();
+    }
+    return numValue.toString();
   }
 
   String _sellerCertificationSummary() {
     final certs = (detail?['seller'] as Map?)?['certifications'];
     if (certs is! List || certs.isEmpty) {
-      return 'ยังไม่มีข้อมูลใบรับรองจากผู้ขาย';
+      return 'ร้านค้ายังไม่ได้อัปโหลดใบรับรอง';
     }
-    return 'มีใบรับรอง ${certs.length} รายการ และผ่านการตรวจสอบล่าสุด';
+    final names = certs
+        .whereType<Map>()
+        .map((e) => (e['name'] ?? e['code'] ?? '').toString())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (names.isEmpty) return 'มีใบรับรอง ${certs.length} รายการ';
+    return 'มีใบรับรอง ${certs.length} รายการ: ${names.take(3).join(', ')}';
   }
 
   String? _mainImageUrl() {
+    final detailThumb = (detail?['thumbnailUrl'] ?? '').toString().trim();
+    if (detailThumb.isNotEmpty) return detailThumb;
+
+    final itemThumb = (widget.item['thumbnailUrl'] ?? '').toString().trim();
+    if (itemThumb.isNotEmpty) return itemThumb;
+
     final images = detail?['images'];
     if (images is List && images.isNotEmpty) {
-      final first = images.first;
-      if (first is Map && first['url'] is String) return first['url'] as String;
+      for (final raw in images) {
+        if (raw is Map && raw['url'] is String) {
+          final url = (raw['url'] as String).trim();
+          if (url.isNotEmpty) return url;
+        }
+      }
     }
-    return widget.item['thumbnailUrl'] as String?;
+
+    return null;
   }
 
   Widget _thumb(String? thumb, {required double height}) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
-      child: thumb != null && thumb.isNotEmpty
-          ? Image.network(
-              thumb,
-              height: height,
-              width: double.infinity,
-              fit: BoxFit.cover,
-              errorBuilder: (_, error, stackTrace) => _fallback(height),
-            )
-          : _fallback(height),
+      child: _buildAnyImage(thumb, height: height, width: double.infinity),
     );
   }
 
-  Widget _fallback(double height) {
+  Widget _buildAnyImage(
+    String? src, {
+    required double height,
+    required double width,
+  }) {
+    final value = (src ?? '').trim();
+    if (value.isEmpty) return _fallback(height, width: width);
+
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return Image.network(
+        value,
+        height: height,
+        width: width,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) =>
+            _fallback(height, width: width),
+      );
+    }
+
+    if (!kIsWeb) {
+      try {
+        final path = value.startsWith('file://')
+            ? value.replaceFirst('file://', '')
+            : value;
+        return Image.file(
+          File(path),
+          height: height,
+          width: width,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) =>
+              _fallback(height, width: width),
+        );
+      } catch (_) {
+        return _fallback(height, width: width);
+      }
+    }
+
+    return _fallback(height, width: width);
+  }
+
+  Widget _fallback(double height, {double width = double.infinity}) {
     return Container(
       height: height,
-      width: double.infinity,
+      width: width,
       alignment: Alignment.center,
       color: const Color(0xFFE0E8CE),
       child: const Text('🦐', style: TextStyle(fontSize: 44)),

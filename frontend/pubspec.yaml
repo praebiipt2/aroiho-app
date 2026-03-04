@@ -17,6 +17,8 @@ dependencies:
   # networking
   dio: ^5.5.0+1
   http: ^1.2.2
+  file_picker: ^8.1.2
+  file_selector: ^1.0.3
 
   # storage
   flutter_secure_storage: ^9.2.2
@@ -41,4 +43,6 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/onboarding/
     - assets/thai_admin.json
+    - assets/logo/aroiho_logo.png

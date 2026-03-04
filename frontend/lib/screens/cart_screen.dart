@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../api/auth_api.dart';
 import '../api/cart_api.dart';
@@ -382,15 +385,7 @@ class _CartScreenState extends State<CartScreen> {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: thumb != null && thumb.isNotEmpty
-                ? Image.network(
-                    thumb,
-                    height: 54,
-                    width: 54,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, error, stackTrace) => _thumbFallback(),
-                  )
-                : _thumbFallback(),
+            child: _buildAnyImage(thumb, height: 54, width: 54),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -677,5 +672,43 @@ class _CartScreenState extends State<CartScreen> {
       alignment: Alignment.center,
       child: const Text('🥬', style: TextStyle(fontSize: 24)),
     );
+  }
+
+  Widget _buildAnyImage(
+    String? src, {
+    required double height,
+    required double width,
+  }) {
+    final value = (src ?? '').trim();
+    if (value.isEmpty) return _thumbFallback();
+
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return Image.network(
+        value,
+        height: height,
+        width: width,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => _thumbFallback(),
+      );
+    }
+
+    if (!kIsWeb) {
+      try {
+        final path = value.startsWith('file://')
+            ? value.replaceFirst('file://', '')
+            : value;
+        return Image.file(
+          File(path),
+          height: height,
+          width: width,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => _thumbFallback(),
+        );
+      } catch (_) {
+        return _thumbFallback();
+      }
+    }
+
+    return _thumbFallback();
   }
 }

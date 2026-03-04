@@ -31,6 +31,10 @@
       "value": "prod-001"
     },
     {
+      "key": "categoryId",
+      "value": "cat-001"
+    },
+    {
       "key": "sellerId",
       "value": "seller-001"
     },
@@ -53,6 +57,10 @@
     {
       "key": "shipmentId",
       "value": "ship-001"
+    },
+    {
+      "key": "lotId",
+      "value": "lot-001"
     }
   ],
   "item": [
@@ -283,6 +291,407 @@
               ]
             },
             "description": "Get seller/farm detail."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Seller (Auth)",
+      "item": [
+        {
+          "name": "Get My Seller",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/seller/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "seller",
+                "me"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Get current seller profile for logged-in user."
+          },
+          "response": []
+        },
+        {
+          "name": "Apply Seller Account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/seller/apply",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "seller",
+                "apply"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"ฟาร์มลุงน้อย\",\n  \"phone\": \"0800000001\",\n  \"addressText\": \"เชียงใหม่\",\n  \"type\": \"FARM\",\n  \"aboutText\": \"ผักสดจากฟาร์ม\"\n}"
+            },
+            "description": "Create seller profile and upgrade role."
+          },
+          "response": []
+        },
+        {
+          "name": "Update My Seller",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/seller/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "seller",
+                "me"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"ฟาร์มลุงน้อย\",\n  \"coverImageUrl\": \"https://example.com/cover.jpg\",\n  \"aboutText\": \"ปลอดสาร ใส่ใจคุณภาพ\"\n}"
+            },
+            "description": "Update seller storefront/profile info."
+          },
+          "response": []
+        },
+        {
+          "name": "List My Seller Products",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/seller/products?page=1&limit=30",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "seller",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "30"
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "List products owned by seller."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Seller Product",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/seller/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "seller",
+                "products"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categoryId\": \"{{categoryId}}\",\n  \"name\": \"ผักสลัดออร์แกนิก\",\n  \"unit\": \"ชุด\",\n  \"basePrice\": 165,\n  \"description\": \"เก็บเช้า ส่งเย็น\",\n  \"isActive\": true\n}"
+            },
+            "description": "Create a new product for seller."
+          },
+          "response": []
+        },
+        {
+          "name": "Update Seller Product",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/seller/products/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "seller",
+                "products",
+                "{{productId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"ผักสลัดออร์แกนิกพรีเมียม\",\n  \"basePrice\": 175,\n  \"isActive\": true\n}"
+            },
+            "description": "Update product fields."
+          },
+          "response": []
+        },
+        {
+          "name": "Toggle Product Active",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/seller/products/{{productId}}/toggle-active",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "seller",
+                "products",
+                "{{productId}}",
+                "toggle-active"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isActive\": true\n}"
+            },
+            "description": "Toggle product visibility."
+          },
+          "response": []
+        },
+        {
+          "name": "List Product Lots",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/seller/products/{{productId}}/lots",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "seller",
+                "products",
+                "{{productId}}",
+                "lots"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "List inventory lots for one product."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Product Lot",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/seller/products/{{productId}}/lots",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "seller",
+                "products",
+                "{{productId}}",
+                "lots"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lotCode\": \"LOT-20260302-A\",\n  \"harvestedAt\": \"2026-03-01\",\n  \"expiresAt\": \"2026-03-10\",\n  \"storageCondition\": \"เก็บเย็น 2-4C\",\n  \"quantityAvailable\": 25,\n  \"status\": \"ACTIVE\"\n}"
+            },
+            "description": "Create a lot. quantityAvailable must be > 0."
+          },
+          "response": []
+        },
+        {
+          "name": "Update Product Lot",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/seller/lots/{{lotId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "seller",
+                "lots",
+                "{{lotId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantityAvailable\": 20,\n  \"status\": \"HOLD\",\n  \"expiresAt\": \"2026-03-12\"\n}"
+            },
+            "description": "Update lot fields. quantityAvailable must be >= 0. status: ACTIVE|HOLD|EXHAUSTED."
           },
           "response": []
         }

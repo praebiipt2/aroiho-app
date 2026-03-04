@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../api/auth_api.dart';
 import '../api/orders_api.dart';
@@ -14,6 +16,7 @@ class OrdersScreen extends StatefulWidget {
 class _OrdersScreenState extends State<OrdersScreen> {
   late final OrdersApi ordersApi;
   final ScrollController _scrollController = ScrollController();
+  Timer? _liveTimer;
   bool loading = true;
   bool loadingMore = false;
   bool hasMore = true;
@@ -37,13 +40,60 @@ class _OrdersScreenState extends State<OrdersScreen> {
     ordersApi = OrdersApi();
     _scrollController.addListener(_onScroll);
     _load(reset: true);
+    _startLiveUpdates();
   }
 
   @override
   void dispose() {
+    _liveTimer?.cancel();
+    _liveTimer = null;
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _startLiveUpdates() {
+    _liveTimer?.cancel();
+    _liveTimer = Timer.periodic(const Duration(seconds: 6), (_) {
+      _refreshHead();
+    });
+  }
+
+  Future<void> _refreshHead() async {
+    if (!mounted || loading || loadingMore || orders.isEmpty) return;
+    final token = widget.authApi.accessToken;
+    if (token == null || token.isEmpty) return;
+
+    try {
+      final result = await ordersApi.listMyOrders(
+        accessToken: token,
+        includeHidden: showHidden,
+        page: 1,
+        limit: _pageSize,
+      );
+      final incoming = (result['items'] as List).cast<Map<String, dynamic>>();
+      if (!mounted || incoming.isEmpty) return;
+
+      final existingById = <String, Map<String, dynamic>>{
+        for (final o in orders)
+          if ((o['id'] ?? '').toString().isNotEmpty) (o['id'] ?? '').toString(): o,
+      };
+
+      for (final o in incoming) {
+        final id = (o['id'] ?? '').toString();
+        if (id.isEmpty) continue;
+        existingById[id] = o;
+      }
+
+      final merged = existingById.values.toList()
+        ..sort((a, b) => ((b['createdAt'] ?? '').toString()).compareTo((a['createdAt'] ?? '').toString()));
+
+      setState(() {
+        orders = merged;
+      });
+    } catch (_) {
+      // live refresh failure should be silent; normal manual refresh still works.
+    }
   }
 
   void _onScroll() {
@@ -136,77 +186,15 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (token == null || token.isEmpty || orderId == null) return;
 
     try {
-      final tracking = await ordersApi.getTracking(
-        accessToken: token,
-        orderId: orderId,
-      );
-      final rawEvents = tracking['events'];
-      final events = rawEvents is List
-          ? rawEvents
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList()
-          : <Map<String, dynamic>>[];
-
       if (!mounted) return;
       await showModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
-        builder: (_) => SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: SizedBox(
-              height: MediaQuery.of(context).size.height * 0.6,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'ติดตามพัสดุ',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-                  ),
-                  const SizedBox(height: 8),
-                  Text((order['orderNo'] ?? '').toString()),
-                  const SizedBox(height: 12),
-                  Expanded(
-                    child: events.isEmpty
-                        ? const Center(child: Text('ยังไม่มีเหตุการณ์ติดตาม'))
-                        : ListView.separated(
-                            itemCount: events.length,
-                            separatorBuilder: (_, _) => const SizedBox(height: 8),
-                            itemBuilder: (_, i) {
-                              final e = events[i];
-                              final type = (e['type'] ?? '-').toString();
-                              final msg = (e['message'] ?? '').toString();
-                              final at = (e['createdAt'] ?? '')
-                                  .toString()
-                                  .replaceFirst('T', ' ')
-                                  .replaceFirst('Z', '');
-                              return Container(
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(color: const Color(0xFFE3E3E3)),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(type, style: const TextStyle(fontWeight: FontWeight.w700)),
-                                    if (msg.isNotEmpty) Text(msg),
-                                    Text(
-                                      at,
-                                      style: const TextStyle(fontSize: 12, color: Colors.black54),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+        builder: (_) => _TrackingLiveSheet(
+          accessToken: token,
+          orderId: orderId,
+          orderNo: (order['orderNo'] ?? '').toString(),
+          title: _trackingCtaLabel((order['orderStatus'] ?? '').toString()),
         ),
       );
     } catch (e) {
@@ -365,18 +353,36 @@ class _OrdersScreenState extends State<OrdersScreen> {
   }
 
   bool _matchFilter(String status) {
+    final normalized = status.trim().toUpperCase();
     if (selectedFilter == 'ALL') return true;
-    if (selectedFilter == 'DELIVERED') return status == 'DELIVERED';
-    if (selectedFilter == 'CANCELLED') return status == 'CANCELLED';
-    return status == 'CONFIRMED' || status == 'PREPARING' || status == 'SHIPPED';
+    if (selectedFilter == 'DELIVERED') return normalized == 'DELIVERED';
+    if (selectedFilter == 'CANCELLED') return normalized == 'CANCELLED';
+    return normalized == 'CONFIRMED' ||
+        normalized == 'PREPARING' ||
+        normalized == 'SHIPPED' ||
+        normalized == 'OUT_FOR_DELIVERY' ||
+        normalized == 'IN_TRANSIT';
+  }
+
+  bool _isParcelPhase(String status) {
+    final s = status.trim().toUpperCase();
+    return s == 'SHIPPED' ||
+        s == 'PICKED_UP' ||
+        s == 'IN_TRANSIT' ||
+        s == 'OUT_FOR_DELIVERY' ||
+        s == 'DELIVERED';
+  }
+
+  String _trackingCtaLabel(String status) {
+    return _isParcelPhase(status) ? 'ติดตามพัสดุ' : 'ติดตามออเดอร์';
   }
 
   String _filterLabel(String filter) {
     switch (filter) {
       case 'IN_PROGRESS':
-        return 'กำลังจัดส่ง';
+        return 'กำลังดำเนินการ';
       case 'DELIVERED':
-        return 'สำเร็จ';
+        return 'จัดส่งสำเร็จ';
       case 'CANCELLED':
         return 'ยกเลิก';
       default:
@@ -392,7 +398,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   @override
   Widget build(BuildContext context) {
     final filteredOrders = orders.where((o) {
-      final status = (o['orderStatus'] ?? '').toString().toUpperCase();
+      final status = (o['orderStatus'] ?? '').toString().trim().toUpperCase();
       return _matchFilter(status);
     }).toList();
 
@@ -463,7 +469,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       else ...[
                         ...filteredOrders.map((o) {
                           final orderNo = (o['orderNo'] ?? '-').toString();
-                          final status = (o['orderStatus'] ?? '').toString().toUpperCase();
+                          final status = (o['orderStatus'] ?? '').toString().trim().toUpperCase();
                           final total = _toNum(o['total']);
                           final createdAt = (o['createdAt'] ?? '').toString();
                           final items = o['items'] is List ? (o['items'] as List).length : 0;
@@ -568,7 +574,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                         Expanded(
                                           child: ElevatedButton(
                                             onPressed: () => _openTracking(o),
-                                            child: const Text('ติดตามพัสดุ'),
+                                            child: Text(_trackingCtaLabel(status)),
                                           ),
                                         ),
                                       ],
@@ -598,6 +604,260 @@ class _OrdersScreenState extends State<OrdersScreen> {
                     ],
                   ),
                 ),
+    );
+  }
+}
+
+class _TrackingLiveSheet extends StatefulWidget {
+  final String accessToken;
+  final String orderId;
+  final String orderNo;
+  final String title;
+
+  const _TrackingLiveSheet({
+    required this.accessToken,
+    required this.orderId,
+    required this.orderNo,
+    required this.title,
+  });
+
+  @override
+  State<_TrackingLiveSheet> createState() => _TrackingLiveSheetState();
+}
+
+class _TrackingLiveSheetState extends State<_TrackingLiveSheet> {
+  final OrdersApi ordersApi = OrdersApi();
+  Timer? timer;
+  bool loading = true;
+  String? error;
+  List<Map<String, dynamic>> events = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    timer = Timer.periodic(const Duration(seconds: 5), (_) => _load(silent: true));
+  }
+
+  @override
+  void dispose() {
+    timer?.cancel();
+    timer = null;
+    super.dispose();
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent && mounted) {
+      setState(() {
+        loading = true;
+        error = null;
+      });
+    }
+
+    try {
+      final tracking = await ordersApi.getTracking(
+        accessToken: widget.accessToken,
+        orderId: widget.orderId,
+      );
+      final rawEvents = tracking['events'];
+      final mapped = rawEvents is List
+          ? rawEvents
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList()
+          : <Map<String, dynamic>>[];
+      if (!mounted) return;
+      setState(() {
+        events = mapped;
+        loading = false;
+        error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        loading = false;
+        error = e.toString();
+      });
+    }
+  }
+
+  String _thEventType(String type) {
+    switch (type.toUpperCase()) {
+      case 'ORDER_CREATED':
+        return 'สร้างคำสั่งซื้อ';
+      case 'PAYMENT_PENDING':
+        return 'รอชำระเงิน';
+      case 'PAYMENT_CONFIRMED':
+        return 'ชำระเงินแล้ว';
+      case 'PREPARING':
+        return 'กำลังเตรียมสินค้า';
+      case 'PACKED':
+        return 'แพ็กสินค้าแล้ว';
+      case 'PICKED_UP':
+        return 'ไรเดอร์รับสินค้าแล้ว';
+      case 'IN_TRANSIT':
+        return 'กำลังขนส่ง';
+      case 'OUT_FOR_DELIVERY':
+        return 'กำลังนำส่ง';
+      case 'DELIVERED':
+        return 'จัดส่งสำเร็จ';
+      case 'CANCELLED':
+        return 'ยกเลิกคำสั่งซื้อ';
+      case 'REFUND_REQUESTED':
+        return 'กำลังดำเนินการคืนเงิน';
+      case 'REFUNDED':
+        return 'คืนเงินสำเร็จ';
+      default:
+        return type;
+    }
+  }
+
+  IconData _eventIcon(String type) {
+    switch (type.toUpperCase()) {
+      case 'DELIVERED':
+        return Icons.check_circle;
+      case 'OUT_FOR_DELIVERY':
+      case 'IN_TRANSIT':
+      case 'PICKED_UP':
+        return Icons.local_shipping;
+      case 'PAYMENT_PENDING':
+      case 'PAYMENT_CONFIRMED':
+        return Icons.payments;
+      case 'CANCELLED':
+        return Icons.cancel;
+      case 'REFUNDED':
+      case 'REFUND_REQUESTED':
+        return Icons.currency_exchange;
+      default:
+        return Icons.schedule;
+    }
+  }
+
+  Color _eventColor(String type) {
+    switch (type.toUpperCase()) {
+      case 'DELIVERED':
+        return const Color(0xFF2E7D32);
+      case 'OUT_FOR_DELIVERY':
+      case 'IN_TRANSIT':
+      case 'PICKED_UP':
+        return const Color(0xFF1565C0);
+      case 'CANCELLED':
+        return const Color(0xFFC62828);
+      case 'REFUNDED':
+      case 'REFUND_REQUESTED':
+        return const Color(0xFF6A1B9A);
+      default:
+        return const Color(0xFF5F6368);
+    }
+  }
+
+  String _safeMessage(String type, String msg) {
+    final normalized = msg.trim();
+    if (normalized.isEmpty) return '';
+    final lower = normalized.toLowerCase();
+    if (lower.contains('should fail')) return '';
+    return normalized;
+  }
+
+  List<Map<String, dynamic>> _latestByType(List<Map<String, dynamic>> source) {
+    final latest = <String, Map<String, dynamic>>{};
+    for (final e in source) {
+      final type = (e['type'] ?? '').toString().toUpperCase();
+      if (type.isEmpty) continue;
+      final current = latest[type];
+      if (current == null) {
+        latest[type] = e;
+        continue;
+      }
+      final nextAt = (e['createdAt'] ?? '').toString();
+      final curAt = (current['createdAt'] ?? '').toString();
+      if (nextAt.compareTo(curAt) > 0) {
+        latest[type] = e;
+      }
+    }
+
+    final result = latest.values.toList()
+      ..sort((a, b) => ((b['createdAt'] ?? '').toString()).compareTo((a['createdAt'] ?? '').toString()));
+    return result;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final displayEvents = _latestByType(events);
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: SizedBox(
+          height: MediaQuery.of(context).size.height * 0.6,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                widget.title,
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 8),
+              Text(widget.orderNo),
+              const SizedBox(height: 12),
+              Expanded(
+                child: loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : error != null
+                        ? Center(child: Text(error!))
+                        : displayEvents.isEmpty
+                            ? const Center(child: Text('ยังไม่มีเหตุการณ์ติดตาม'))
+                            : ListView.separated(
+                                itemCount: displayEvents.length,
+                                separatorBuilder: (_, _) => const SizedBox(height: 8),
+                                itemBuilder: (_, i) {
+                                  final e = displayEvents[i];
+                                  final type = (e['type'] ?? '-').toString();
+                                  final msg = _safeMessage(type, (e['message'] ?? '').toString());
+                                  final color = _eventColor(type);
+                                  final at = (e['createdAt'] ?? '')
+                                      .toString()
+                                      .replaceFirst('T', ' ')
+                                      .replaceFirst('Z', '');
+                                  return Container(
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(color: const Color(0xFFE3E3E3)),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Icon(_eventIcon(type), size: 18, color: color),
+                                            const SizedBox(width: 6),
+                                            Expanded(
+                                              child: Text(
+                                                _thEventType(type),
+                                                style: TextStyle(
+                                                  fontWeight: FontWeight.w700,
+                                                  color: color,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        if (msg.isNotEmpty) Text(msg),
+                                        Text(
+                                          at,
+                                          style: const TextStyle(fontSize: 12, color: Colors.black54),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

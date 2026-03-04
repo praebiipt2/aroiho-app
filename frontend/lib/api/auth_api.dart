@@ -60,7 +60,7 @@ class AuthApi {
 
   Future<Map<String, dynamic>> updateMe({
     required String displayName,
-    required String email,
+    String? email,
     String? province,
     String? district,
     String? addressLine1,
@@ -70,8 +70,8 @@ class AuthApi {
 
     final body = <String, dynamic>{
       'displayName': displayName,
-      'email': email,
     };
+    if (email != null) body['email'] = email;
 
     if (province != null) body['province'] = province;
     if (district != null) body['district'] = district;

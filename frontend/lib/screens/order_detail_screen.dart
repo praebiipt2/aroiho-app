@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../api/auth_api.dart';
 import '../api/orders_api.dart';
@@ -18,6 +20,7 @@ class OrderDetailScreen extends StatefulWidget {
 
 class _OrderDetailScreenState extends State<OrderDetailScreen> {
   late final OrdersApi ordersApi;
+  Timer? _liveTimer;
   bool loading = true;
   bool acting = false;
   String? error;
@@ -30,9 +33,19 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     super.initState();
     ordersApi = OrdersApi();
     _load();
+    _liveTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!acting) _load(silent: true);
+    });
   }
 
-  Future<void> _load() async {
+  @override
+  void dispose() {
+    _liveTimer?.cancel();
+    _liveTimer = null;
+    super.dispose();
+  }
+
+  Future<void> _load({bool silent = false}) async {
     final token = widget.authApi.accessToken;
     if (token == null || token.isEmpty) {
       setState(() {
@@ -40,6 +53,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         error = 'กรุณาเข้าสู่ระบบใหม่';
       });
       return;
+    }
+
+    if (!silent && mounted) {
+      setState(() {
+        loading = true;
+        error = null;
+      });
     }
 
     try {
@@ -74,8 +94,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        loading = false;
-        error = e.toString();
+        if (!silent) {
+          loading = false;
+          error = e.toString();
+        }
       });
     }
   }
@@ -146,6 +168,106 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       default:
         return status ?? '-';
     }
+  }
+
+  String _thEventType(String type) {
+    switch (type.toUpperCase()) {
+      case 'ORDER_CREATED':
+        return 'สร้างคำสั่งซื้อ';
+      case 'PAYMENT_PENDING':
+        return 'รอชำระเงิน';
+      case 'PAYMENT_CONFIRMED':
+        return 'ชำระเงินแล้ว';
+      case 'PREPARING':
+        return 'กำลังเตรียมสินค้า';
+      case 'PACKED':
+        return 'แพ็กสินค้าแล้ว';
+      case 'PICKED_UP':
+        return 'ไรเดอร์รับสินค้าแล้ว';
+      case 'IN_TRANSIT':
+        return 'กำลังขนส่ง';
+      case 'OUT_FOR_DELIVERY':
+        return 'กำลังนำส่ง';
+      case 'DELIVERED':
+        return 'จัดส่งสำเร็จ';
+      case 'CANCELLED':
+        return 'ยกเลิกคำสั่งซื้อ';
+      case 'REFUND_REQUESTED':
+        return 'กำลังดำเนินการคืนเงิน';
+      case 'REFUNDED':
+        return 'คืนเงินสำเร็จ';
+      default:
+        return type;
+    }
+  }
+
+  IconData _eventIcon(String type) {
+    switch (type.toUpperCase()) {
+      case 'DELIVERED':
+        return Icons.check_circle;
+      case 'OUT_FOR_DELIVERY':
+      case 'IN_TRANSIT':
+      case 'PICKED_UP':
+        return Icons.local_shipping;
+      case 'PAYMENT_PENDING':
+      case 'PAYMENT_CONFIRMED':
+        return Icons.payments;
+      case 'CANCELLED':
+        return Icons.cancel;
+      case 'REFUNDED':
+      case 'REFUND_REQUESTED':
+        return Icons.currency_exchange;
+      default:
+        return Icons.schedule;
+    }
+  }
+
+  Color _eventColor(String type) {
+    switch (type.toUpperCase()) {
+      case 'DELIVERED':
+        return const Color(0xFF2E7D32);
+      case 'OUT_FOR_DELIVERY':
+      case 'IN_TRANSIT':
+      case 'PICKED_UP':
+        return const Color(0xFF1565C0);
+      case 'CANCELLED':
+        return const Color(0xFFC62828);
+      case 'REFUNDED':
+      case 'REFUND_REQUESTED':
+        return const Color(0xFF6A1B9A);
+      default:
+        return const Color(0xFF5F6368);
+    }
+  }
+
+  String _safeMessage(String type, String msg) {
+    final normalized = msg.trim();
+    if (normalized.isEmpty) return '';
+    final lower = normalized.toLowerCase();
+    if (lower.contains('should fail')) return '';
+    return normalized;
+  }
+
+  List<Map<String, dynamic>> _latestByType(List<Map<String, dynamic>> source) {
+    final latest = <String, Map<String, dynamic>>{};
+    for (final e in source) {
+      final type = (e['type'] ?? '').toString().toUpperCase();
+      if (type.isEmpty) continue;
+      final current = latest[type];
+      if (current == null) {
+        latest[type] = e;
+        continue;
+      }
+      final nextAt = (e['createdAt'] ?? '').toString();
+      final curAt = (current['createdAt'] ?? '').toString();
+      if (nextAt.compareTo(curAt) > 0) {
+        latest[type] = e;
+      }
+    }
+
+    final result = latest.values.toList()
+      ..sort((a, b) => ((b['createdAt'] ?? '').toString()).compareTo((a['createdAt'] ?? '').toString()));
+    return result;
   }
 
   @override
@@ -313,6 +435,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   Widget _trackingCard() {
+    final displayEvents = _latestByType(trackingEvents);
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -324,28 +447,32 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         children: [
           const Text('ไทม์ไลน์การติดตาม', style: TextStyle(fontWeight: FontWeight.w800)),
           const SizedBox(height: 8),
-          if (trackingEvents.isEmpty)
+          if (displayEvents.isEmpty)
             const Text('ยังไม่มีเหตุการณ์ติดตาม')
           else
-            ...trackingEvents.map((e) {
+            ...displayEvents.map((e) {
               final type = (e['type'] ?? '').toString();
-              final msg = (e['message'] ?? '').toString();
+              final msg = _safeMessage(type, (e['message'] ?? '').toString());
+              final color = _eventColor(type);
               final at = _fmtDate(e['createdAt']);
               return Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Padding(
+                    Padding(
                       padding: EdgeInsets.only(top: 3),
-                      child: Icon(Icons.circle, size: 8),
+                      child: Icon(_eventIcon(type), size: 16, color: color),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(type, style: const TextStyle(fontWeight: FontWeight.w700)),
+                          Text(
+                            _thEventType(type),
+                            style: TextStyle(fontWeight: FontWeight.w700, color: color),
+                          ),
                           if (msg.isNotEmpty) Text(msg),
                           Text(at, style: const TextStyle(fontSize: 12, color: Colors.black54)),
                         ],

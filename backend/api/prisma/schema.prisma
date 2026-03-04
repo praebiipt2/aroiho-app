@@ -24,6 +24,7 @@ model User {
   addresses Address[]
   carts     Cart[]
   orders    Order[]
+  sellerProfile Seller?
 
   @@map("users")
 }
@@ -80,20 +81,25 @@ model Category {
 // ============================================
 model Seller {
   id          String   @id @default(uuid()) @db.Uuid
+  userId      String?  @unique @map("user_id") @db.Uuid
   type        String   @db.VarChar(20)
   name        String   @db.VarChar(200)
   taxId       String?  @map("tax_id") @db.VarChar(30)
   phone       String?  @db.VarChar(20)
   addressText String?  @map("address_text") @db.Text
+  coverImageUrl String? @map("cover_image_url") @db.Text
+  aboutText   String?  @map("about_text") @db.Text
   lat         Decimal? @db.Decimal(10, 7)
   lng         Decimal? @db.Decimal(10, 7)
   status      String   @default("ACTIVE") @db.VarChar(20)
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
+  user           User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
   products       Product[]
   inventoryLots  InventoryLot[]
   certifications SellerCertification[]
   orderItems     OrderItem[]
+  promotionCampaigns SellerPromotionCampaign[]
 
   @@map("sellers")
 }
@@ -154,8 +160,42 @@ model Product {
   inventoryLots InventoryLot[]
   cartItems     CartItem[]
   orderItems    OrderItem[]
+  promotionCampaigns SellerPromotionCampaign[]
 
   @@map("products")
+}
+
+// ============================================
+// SELLER PROMOTIONS
+// ============================================
+model SellerPromotionCampaign {
+  id String @id @default(uuid()) @db.Uuid
+
+  sellerId String @map("seller_id") @db.Uuid
+  productId String @map("product_id") @db.Uuid
+
+  planCode String @map("plan_code") @db.VarChar(40)
+  planName String @map("plan_name") @db.VarChar(80)
+  pricePerDay Decimal @map("price_per_day") @db.Decimal(12, 2)
+  durationDays Int @map("duration_days")
+  estimatedCost Decimal @map("estimated_cost") @db.Decimal(12, 2)
+
+  status String @default("ACTIVE") @db.VarChar(20)
+  billingStatus String @default("PENDING") @map("billing_status") @db.VarChar(20)
+  note String? @db.VarChar(255)
+
+  startsAt DateTime @map("starts_at") @db.Timestamptz(6)
+  endsAt DateTime @map("ends_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  seller Seller @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([sellerId, status])
+  @@index([productId, status])
+  @@index([endsAt])
+  @@map("seller_promotion_campaigns")
 }
 
 model ProductImage {

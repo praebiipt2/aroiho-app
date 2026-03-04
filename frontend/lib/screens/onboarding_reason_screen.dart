@@ -39,7 +39,7 @@ class _OnboardingReasonScreenState extends State<OnboardingReasonScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.88),
+            color: Colors.white.withValues(alpha: 0.88),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: active ? brandColor : const Color(0xFFE6E6E6),
@@ -67,62 +67,89 @@ class _OnboardingReasonScreenState extends State<OnboardingReasonScreen> {
     }
 
     return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  const SizedBox(height: 8),
-                  const Text(
-                    'aroiho',
-                    style: TextStyle(fontSize: 36, fontWeight: FontWeight.w900),
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'ให้ aroiho แนะนำได้ตรงใจคุณมากขึ้น',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 18),
-                  const Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'เหตุผลที่คุณใช้ aroiho คืออะไร?',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  ...options.map((o) => Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: optionTile(o.$1, o.$2),
-                      )),
-                  const Spacer(),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.pushNamed(
-                          context,
-                          '/onboarding/food',
-                          arguments: selected.toList(),
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: brandColor,
-                        foregroundColor: Colors.black,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset(
+            'assets/onboarding/onboarding_bg.jpg',
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) => Container(
+              color: const Color(0xFFF2F2EC),
+            ),
+          ),
+          Container(color: Colors.white.withValues(alpha: 0.48)),
+          SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        height: 72,
+                        width: 260,
+                        child: ClipRect(
+                          child: Transform.scale(
+                            scale: 3.3,
+                            alignment: Alignment.center,
+                            child: Image.asset(
+                              'assets/logo/aroiho_logo.png',
+                              fit: BoxFit.contain,
+                            ),
+                          ),
+                        ),
                       ),
-                      child: const Text('ถัดไป', style: TextStyle(fontWeight: FontWeight.w800)),
-                    ),
+                      const Text(
+                        'ให้ aroiho แนะนำได้ตรงใจคุณมากขึ้น',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 18),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'เหตุผลที่คุณใช้ aroiho คืออะไร?',
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      ...options.map((o) => Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: optionTile(o.$1, o.$2),
+                          )),
+                      const Spacer(),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: ElevatedButton(
+                          onPressed: () {
+                            Navigator.pushNamed(
+                              context,
+                              '/onboarding/food',
+                              arguments: selected.toList(),
+                            );
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: brandColor,
+                            foregroundColor: Colors.black,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: const Text(
+                            'ถัดไป',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }

@@ -1,9 +1,16 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../api/auth_api.dart';
 import '../api/catalog_api.dart';
+import '../config/app_config.dart';
+import 'seller_products_screen.dart';
 
 class SellerDetailScreen extends StatefulWidget {
   final String sellerId;
-  const SellerDetailScreen({super.key, required this.sellerId});
+  final AuthApi? authApi;
+  const SellerDetailScreen({super.key, required this.sellerId, this.authApi});
 
   @override
   State<SellerDetailScreen> createState() => _SellerDetailScreenState();
@@ -15,24 +22,36 @@ class _SellerDetailScreenState extends State<SellerDetailScreen> {
   List<Map<String, dynamic>> products = [];
   bool loading = true;
   String? error;
+  bool isMySeller = false;
 
   @override
   void initState() {
     super.initState();
-    catalogApi = CatalogApi(baseUrl: 'http://localhost:3000');
+    catalogApi = CatalogApi(baseUrl: AppConfig.baseUrl);
     _load();
   }
 
   Future<void> _load() async {
     try {
-      final results = await Future.wait([
+      final results = await Future.wait<dynamic>([
         catalogApi.getSellerInfo(widget.sellerId),
         catalogApi.listProductsBySeller(widget.sellerId),
       ]);
+
+      var mySeller = false;
+      final token = widget.authApi?.accessToken;
+      if (token != null && token.isNotEmpty) {
+        try {
+          final mine = await catalogApi.getMySeller(accessToken: token);
+          mySeller = (mine?['id'] ?? '').toString() == widget.sellerId;
+        } catch (_) {}
+      }
+
       if (!mounted) return;
       setState(() {
         seller = results[0] as Map<String, dynamic>;
         products = results[1] as List<Map<String, dynamic>>;
+        isMySeller = mySeller;
         loading = false;
       });
     } catch (e) {
@@ -50,6 +69,9 @@ class _SellerDetailScreenState extends State<SellerDetailScreen> {
     final sellerName = _displaySellerName(rawSellerName);
     final lat = seller?['lat'];
     final lng = seller?['lng'];
+    final address = (seller?['addressText'] ?? '').toString();
+    final about = (seller?['aboutText'] ?? '').toString();
+    final coverImageUrl = (seller?['coverImageUrl'] ?? '').toString();
 
     return Scaffold(
       backgroundColor: const Color(0xFFF2F2EC),
@@ -69,9 +91,20 @@ class _SellerDetailScreenState extends State<SellerDetailScreen> {
                               onPressed: () => Navigator.pop(context),
                               icon: const Icon(Icons.arrow_back_ios_new_rounded),
                             ),
-                            const Text(
-                              'aroiho',
-                              style: TextStyle(fontSize: 34, fontWeight: FontWeight.w900, letterSpacing: -1.3),
+                            SizedBox(
+                              height: 40,
+                              width: 130,
+                              child: ClipRect(
+                                child: Transform.scale(
+                                  scale: 3.5,
+                                  alignment: Alignment.centerLeft,
+                                  child: Image.asset(
+                                    'assets/logo/aroiho_logo.png',
+                                    fit: BoxFit.contain,
+                                    alignment: Alignment.centerLeft,
+                                  ),
+                                ),
+                              ),
                             ),
                             const Spacer(),
                             IconButton(
@@ -80,16 +113,7 @@ class _SellerDetailScreenState extends State<SellerDetailScreen> {
                             ),
                           ],
                         ),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Container(
-                            height: 190,
-                            width: double.infinity,
-                            color: const Color(0xFFDDE7C0),
-                            alignment: Alignment.center,
-                            child: const Text('🏡', style: TextStyle(fontSize: 52)),
-                          ),
-                        ),
+                        _coverSection(coverImageUrl),
                         const SizedBox(height: 10),
                         Text(
                           sellerName,
@@ -109,12 +133,56 @@ class _SellerDetailScreenState extends State<SellerDetailScreen> {
                           ],
                         ),
                         const SizedBox(height: 8),
+                        if (address.isNotEmpty)
+                          Text(
+                            address,
+                            style: TextStyle(color: Colors.grey.shade800, fontSize: 12),
+                          ),
+                        if (about.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            about,
+                            style: TextStyle(color: Colors.grey.shade800, fontSize: 12, height: 1.4),
+                          ),
+                        ],
+                        const SizedBox(height: 8),
                         Wrap(
                           spacing: 6,
                           runSpacing: 6,
                           children: _certTags(),
                         ),
                         const SizedBox(height: 10),
+                        if (isMySeller && widget.authApi != null) ...[
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => SellerProductsScreen(
+                                          authApi: widget.authApi!,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  icon: const Icon(Icons.inventory_2_outlined),
+                                  label: const Text('จัดการสินค้า'),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: _openEditShopDialog,
+                                  icon: const Icon(Icons.edit_outlined),
+                                  label: const Text('แก้ไขหน้าร้าน'),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                        ],
                         Text(
                           'มีสินค้าในร้าน ${products.length} รายการ',
                           style: const TextStyle(fontWeight: FontWeight.w700),
@@ -139,6 +207,194 @@ class _SellerDetailScreenState extends State<SellerDetailScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _openEditShopDialog() async {
+    final token = widget.authApi?.accessToken;
+    if (token == null || token.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('กรุณาเข้าสู่ระบบก่อน')),
+      );
+      return;
+    }
+
+    final nameCtl = TextEditingController(text: (seller?['name'] ?? '').toString());
+    final phoneCtl = TextEditingController(text: (seller?['phone'] ?? '').toString());
+    final addressCtl = TextEditingController(text: (seller?['addressText'] ?? '').toString());
+    final aboutCtl = TextEditingController(text: (seller?['aboutText'] ?? '').toString());
+    final imageCtl = TextEditingController(text: (seller?['coverImageUrl'] ?? '').toString());
+    final latCtl = TextEditingController(text: _toDoubleString(seller?['lat']));
+    final lngCtl = TextEditingController(text: _toDoubleString(seller?['lng']));
+    String? localError;
+    bool saving = false;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('แก้ไขหน้าร้าน'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: nameCtl, decoration: const InputDecoration(labelText: 'ชื่อร้าน *')),
+                const SizedBox(height: 8),
+                TextField(controller: phoneCtl, decoration: const InputDecoration(labelText: 'เบอร์ติดต่อร้าน')),
+                const SizedBox(height: 8),
+                TextField(controller: addressCtl, decoration: const InputDecoration(labelText: 'ที่อยู่ร้าน')),
+                const SizedBox(height: 8),
+                TextField(controller: imageCtl, decoration: const InputDecoration(labelText: 'URL รูปร้าน')),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: aboutCtl,
+                  maxLines: 3,
+                  decoration: const InputDecoration(labelText: 'รายละเอียดร้าน'),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: latCtl,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+                        decoration: const InputDecoration(labelText: 'ละติจูด'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: lngCtl,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+                        decoration: const InputDecoration(labelText: 'ลองจิจูด'),
+                      ),
+                    ),
+                  ],
+                ),
+                if (localError != null) ...[
+                  const SizedBox(height: 8),
+                  Text(localError!, style: const TextStyle(color: Colors.red)),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(ctx, false),
+              child: const Text('ยกเลิก'),
+            ),
+            ElevatedButton(
+              onPressed: saving
+                  ? null
+                  : () async {
+                      if (nameCtl.text.trim().isEmpty) {
+                        setLocal(() => localError = 'กรุณากรอกชื่อร้าน');
+                        return;
+                      }
+                      final lat = latCtl.text.trim().isEmpty ? null : double.tryParse(latCtl.text.trim());
+                      final lng = lngCtl.text.trim().isEmpty ? null : double.tryParse(lngCtl.text.trim());
+                      if ((latCtl.text.trim().isNotEmpty && lat == null) ||
+                          (lngCtl.text.trim().isNotEmpty && lng == null)) {
+                        setLocal(() => localError = 'พิกัดไม่ถูกต้อง');
+                        return;
+                      }
+
+                      setLocal(() {
+                        saving = true;
+                        localError = null;
+                      });
+                      try {
+                        await catalogApi.updateMySeller(
+                          accessToken: token,
+                          name: nameCtl.text.trim(),
+                          phone: phoneCtl.text.trim(),
+                          addressText: addressCtl.text.trim(),
+                          coverImageUrl: imageCtl.text.trim(),
+                          aboutText: aboutCtl.text.trim(),
+                          lat: lat,
+                          lng: lng,
+                        );
+                        if (!ctx.mounted) return;
+                        Navigator.pop(ctx, true);
+                      } catch (e) {
+                        setLocal(() {
+                          saving = false;
+                          localError = e.toString();
+                        });
+                      }
+                    },
+              child: Text(saving ? 'กำลังบันทึก...' : 'บันทึก'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    nameCtl.dispose();
+    phoneCtl.dispose();
+    addressCtl.dispose();
+    aboutCtl.dispose();
+    imageCtl.dispose();
+    latCtl.dispose();
+    lngCtl.dispose();
+
+    if (saved == true) {
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('อัปเดตหน้าร้านแล้ว')),
+      );
+    }
+  }
+
+  Widget _coverSection(String coverImageUrl) {
+    final src = coverImageUrl.trim();
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: src.isNotEmpty
+          ? _coverImage(src)
+          : _coverFallback(),
+    );
+  }
+
+  Widget _coverImage(String src) {
+    final lower = src.toLowerCase();
+    final isUrl = lower.startsWith('http://') || lower.startsWith('https://');
+    if (isUrl) {
+      return Image.network(
+        src,
+        height: 190,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => _coverFallback(),
+      );
+    }
+    if (!kIsWeb) {
+      final path = src.startsWith('file://') ? src.replaceFirst('file://', '') : src;
+      return Image.file(
+        File(path),
+        height: 190,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => _coverFallback(),
+      );
+    }
+    return _coverFallback();
+  }
+
+  Widget _coverFallback() {
+    return Container(
+      height: 190,
+      width: double.infinity,
+      color: const Color(0xFFDDE7C0),
+      alignment: Alignment.center,
+      child: const Text('🏡', style: TextStyle(fontSize: 52)),
+    );
+  }
+
+  String _toDoubleString(dynamic v) {
+    if (v == null) return '';
+    if (v is num) return v.toString();
+    return v.toString();
   }
 
   Widget _errorView() {

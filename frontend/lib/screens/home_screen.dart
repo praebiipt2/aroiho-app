@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../api/auth_api.dart';
@@ -5,11 +7,14 @@ import '../api/addresses_api.dart';
 import '../api/cart_api.dart';
 import '../api/catalog_api.dart';
 import '../storage/profile_store.dart';
+import '../config/app_config.dart';
 import 'address_confirm_screen.dart';
 import 'cart_screen.dart';
 import 'orders_screen.dart';
 import 'profile_screen.dart';
 import 'product_detail_screen.dart';
+import 'category_products_screen.dart';
+import 'products_list_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final AuthApi authApi;
@@ -29,19 +34,21 @@ class _HomeScreenState extends State<HomeScreen> {
   bool buyingNow = false;
   String? error;
   String locationLabel = 'Current location';
+  List<Map<String, dynamic>> allProducts = [];
   List<Map<String, dynamic>> recommended = [];
+  List<Map<String, dynamic>> categoryCatalog = [];
 
   final categories = const [
     {'label': 'ออร์แกนิก', 'emoji': '🥬'},
-    {'label': 'ของสด', 'emoji': '🦐'},
+    {'label': 'ของสด', 'emoji': '🦞'},
     {'label': 'โฮมเมด', 'emoji': '🍞'},
-    {'label': 'อร่อยมาก!', 'emoji': '✨'},
+    {'label': 'อร่อยเหาะ', 'emoji': '🥄'},
   ];
 
   @override
   void initState() {
     super.initState();
-    catalogApi = CatalogApi(baseUrl: 'http://localhost:3000');
+    catalogApi = CatalogApi(baseUrl: AppConfig.baseUrl);
     cartApi = CartApi();
     addressesApi = AddressesApi();
     _loadCurrentLocation();
@@ -98,15 +105,19 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       final results = await Future.wait([
         catalogApi.listProducts(page: 1, limit: 20),
+        catalogApi.listCategories(),
         ProfileStore.loadOnboardingFoods(),
       ]);
 
       final items = results[0] as List<Map<String, dynamic>>;
-      final foods = results[1] as List<String>;
+      final categoryRaw = results[1] as List<Map<String, dynamic>>;
+      final foods = results[2] as List<String>;
       final ranked = _rankProductsByPreference(items, foods);
 
       setState(() {
+        allProducts = items;
         recommended = ranked;
+        categoryCatalog = categoryRaw;
         loading = false;
       });
     } catch (e) {
@@ -117,10 +128,37 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _resetOnboardingDev() async {
-    await ProfileStore.clear();
-    if (!mounted) return;
-    Navigator.pushNamedAndRemoveUntil(context, '/', (r) => false);
+  String? _resolveCategoryId(String label) {
+    final pairs = <MapEntry<String, List<String>>>[
+      MapEntry('ออร์แกนิก', ['ออร์แกนิก', 'ผัก']),
+      MapEntry('ของสด', ['ของสด', 'ทะเล', 'กุ้ง', 'ปลา']),
+      MapEntry('โฮมเมด', ['โฮมเมด', 'ขนม', 'เบเกอรี่']),
+      MapEntry('อร่อยเหาะ', ['พร้อมทาน', 'อาหาร', 'อร่อย']),
+    ];
+
+    List<String> keys = [label];
+    for (final p in pairs) {
+      if (label.contains(p.key)) {
+        keys = p.value;
+        break;
+      }
+    }
+
+    for (final root in categoryCatalog) {
+      final rootId = (root['id'] ?? '').toString();
+      final rootName = (root['name'] ?? '').toString();
+      if (rootId.isNotEmpty && keys.any((k) => rootName.contains(k))) return rootId;
+
+      final children = root['children'];
+      if (children is List) {
+        for (final c in children.whereType<Map>()) {
+          final id = (c['id'] ?? '').toString();
+          final name = (c['name'] ?? '').toString();
+          if (id.isNotEmpty && keys.any((k) => name.contains(k))) return id;
+        }
+      }
+    }
+    return null;
   }
 
   void _openProduct(Map<String, dynamic> item) {
@@ -204,16 +242,12 @@ class _HomeScreenState extends State<HomeScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _topBar(),
-                const SizedBox(height: 18),
-                if (kDebugMode)
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      onPressed: _resetOnboardingDev,
-                      child: const Text('Reset Onboarding'),
-                    ),
-                  ),
-                _sectionTitle('แนะนำสำหรับคุณวันนี้', showMore: true),
+                const SizedBox(height: 2),
+                _sectionTitle(
+                  'แนะนำสำหรับคุณวันนี้',
+                  showMore: true,
+                  onMore: () => _openProductsList('แนะนำสำหรับคุณวันนี้', recommended),
+                ),
                 const SizedBox(height: 10),
                 if (loading) ...[
                   const Center(
@@ -244,7 +278,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: categories.map((c) => _categoryChip(c)).toList(),
                 ),
                 const SizedBox(height: 20),
-                _sectionTitle('คัดมาแล้ววันนี้', showMore: true),
+                _sectionTitle(
+                  'คัดมาแล้ววันนี้',
+                  showMore: true,
+                  onMore: () => _openProductsList('สินค้าทั้งหมด', allProducts),
+                ),
                 const SizedBox(height: 10),
                 _highlightCard(),
               ],
@@ -297,9 +335,23 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _topBar() {
     return Row(
       children: [
-        const Text(
-          'aroiho',
-          style: TextStyle(fontSize: 36, fontWeight: FontWeight.w900, letterSpacing: -1.5),
+        SizedBox(
+          height: 46,
+          width: 190,
+          child: ClipRect(
+            child: Transform.translate(
+              offset: const Offset(-24, 0),
+              child: Transform.scale(
+                scale: 3.8,
+                alignment: Alignment.centerLeft,
+                child: Image.asset(
+                  'assets/logo/aroiho_logo.png',
+                  fit: BoxFit.contain,
+                  alignment: Alignment.centerLeft,
+                ),
+              ),
+            ),
+          ),
         ),
         const Spacer(),
         InkWell(
@@ -324,21 +376,37 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ),
+        const SizedBox(width: 6),
+        IconButton(
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => CartScreen(authApi: widget.authApi),
+              ),
+            );
+          },
+          icon: const Icon(Icons.shopping_cart_outlined),
+        ),
       ],
     );
   }
 
-  Widget _sectionTitle(String title, {bool showMore = false}) {
+  Widget _sectionTitle(String title, {bool showMore = false, VoidCallback? onMore}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(
           title,
-          style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w900, letterSpacing: -0.8),
+          style: TextStyle(
+            fontSize: (title == 'แนะนำสำหรับคุณวันนี้' || title == 'คัดมาแล้ววันนี้') ? 25 : 32,
+            fontWeight: FontWeight.w900,
+            letterSpacing: -0.8,
+          ),
         ),
         if (showMore)
           TextButton(
-            onPressed: _loadProducts,
+            onPressed: onMore,
             child: const Text('ดูเพิ่มเติม', style: TextStyle(fontSize: 12)),
           ),
       ],
@@ -368,7 +436,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _recommendedStrip() {
-    final items = recommended.take(5).toList();
+    final items = recommended.take(8).toList();
     return SizedBox(
       height: 184,
       child: ListView.separated(
@@ -451,15 +519,32 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _categoryChip(Map<String, String> c) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEDDD79),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        '${c['emoji']} ${c['label']}',
-        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+    final label = (c['label'] ?? '').toString();
+    final categoryId = _resolveCategoryId(label);
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => CategoryProductsScreen(
+              authApi: widget.authApi,
+              categoryId: categoryId,
+              categoryLabel: label,
+            ),
+          ),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFFEDDD79),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          '${c['emoji']} ${c['label']}',
+          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+        ),
       ),
     );
   }
@@ -539,16 +624,45 @@ class _HomeScreenState extends State<HomeScreen> {
   }) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
-      child: thumb != null && thumb.isNotEmpty
-          ? Image.network(
-              thumb,
-              height: height,
-              width: width,
-              fit: BoxFit.cover,
-              errorBuilder: (_, error, stackTrace) => _thumbFallback(height, width),
-            )
-          : _thumbFallback(height, width),
+      child: _buildAnyImage(thumb, height: height, width: width),
     );
+  }
+
+  Widget _buildAnyImage(
+    String? src, {
+    required double height,
+    required double width,
+  }) {
+    final value = (src ?? '').trim();
+    if (value.isEmpty) return _thumbFallback(height, width);
+
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return Image.network(
+        value,
+        height: height,
+        width: width,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) =>
+            _thumbFallback(height, width),
+      );
+    }
+
+    if (!kIsWeb) {
+      try {
+        final path = value.startsWith('file://') ? value.replaceFirst('file://', '') : value;
+        return Image.file(
+          File(path),
+          height: height,
+          width: width,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) =>
+              _thumbFallback(height, width),
+        );
+      } catch (_) {
+        return _thumbFallback(height, width);
+      }
+    }
+    return _thumbFallback(height, width);
   }
 
   Widget _thumbFallback(double height, double width) {
@@ -571,6 +685,7 @@ class _HomeScreenState extends State<HomeScreen> {
     List<String> foods,
   ) {
     if (foods.isEmpty) return items;
+    final preferredCategoryIds = _preferredCategoryIds(foods);
 
     final preferredKeywords = <String>{
       for (final f in foods) ..._foodKeywords(f),
@@ -582,7 +697,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
     for (final item in items) {
       final haystack = '${item['name'] ?? ''} ${item['unit'] ?? ''}'.toLowerCase();
-      final isMatch = preferredKeywords.any(haystack.contains);
+      final categoryId = (item['categoryId'] ?? '').toString();
+      final categoryMatched = categoryId.isNotEmpty && preferredCategoryIds.contains(categoryId);
+      final keywordMatched = preferredKeywords.any(haystack.contains);
+      final isMatch = categoryMatched || keywordMatched;
       if (isMatch) {
         matched.add(item);
       } else {
@@ -590,6 +708,15 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
     return [...matched, ...others];
+  }
+
+  Set<String> _preferredCategoryIds(List<String> foods) {
+    final ids = <String>{};
+    for (final f in foods) {
+      final id = _resolveCategoryId(f);
+      if (id != null && id.isNotEmpty) ids.add(id);
+    }
+    return ids;
   }
 
   Set<String> _foodKeywords(String food) {
@@ -614,4 +741,18 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     return {};
   }
+
+  void _openProductsList(String title, List<Map<String, dynamic>> items) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProductsListScreen(
+          title: title,
+          items: items,
+          authApi: widget.authApi,
+        ),
+      ),
+    );
+  }
+
 }

@@ -17,9 +17,12 @@ class _LoginScreenState extends State<LoginScreen> {
   LoginTab tab = LoginTab.phone;
   PhoneStep step = PhoneStep.enterPhone;
 
-  final phoneCtl = TextEditingController(text: '0800000001');
+  final phoneCtl = TextEditingController();
   final otpCtl = TextEditingController();
+  final emailCtl = TextEditingController();
+  final passwordCtl = TextEditingController();
   String? requestId;
+  bool showEmailPassword = false;
 
   bool loading = false;
   String? error;
@@ -70,6 +73,8 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     phoneCtl.dispose();
     otpCtl.dispose();
+    emailCtl.dispose();
+    passwordCtl.dispose();
     super.dispose();
   }
 
@@ -177,8 +182,9 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                   ] else ...[
-                    const TextField(
-                      decoration: InputDecoration(
+                    TextField(
+                      controller: emailCtl,
+                      decoration: const InputDecoration(
                         hintText: 'Enter your email',
                         filled: true,
                         fillColor: Colors.white,
@@ -186,13 +192,18 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    const TextField(
-                      obscureText: true,
+                    TextField(
+                      controller: passwordCtl,
+                      obscureText: !showEmailPassword,
                       decoration: InputDecoration(
                         hintText: 'Enter your password',
                         filled: true,
                         fillColor: Colors.white,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(14))),
+                        border: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(14))),
+                        suffixIcon: IconButton(
+                          onPressed: () => setState(() => showEmailPassword = !showEmailPassword),
+                          icon: Icon(showEmailPassword ? Icons.visibility_off : Icons.visibility),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),
